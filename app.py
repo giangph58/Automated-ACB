@@ -41,12 +41,20 @@ def generate_ppt_endpoint():
         output_files = generate_ppt(input_file, output_path, template_path, image_path)
         
         # Create a zip file containing all output files
-        zip_path = os.path.join(output_path, f'ACB_{file.filename}.zip')
+        zip_path = os.path.join(output_path, f'ACB_{os.path.splitext(file.filename)[0]}.zip')
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             for file in output_files:
                 zipf.write(file, os.path.basename(file))
         
-        return send_file(zip_path, as_attachment=True)
+        response = send_file(zip_path, as_attachment=True)
+        
+        # Remove the input file and output files after sending the response
+        os.remove(input_file)
+        for output_file in output_files:
+            os.remove(output_file)
+        # os.remove(zip_path)
+        
+        return response
 
 if __name__ == "__main__":
     app.run(debug=True)
