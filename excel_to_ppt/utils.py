@@ -31,7 +31,7 @@ def save_excel(df, file_path):
 
 def process_dataframe(df):
     """
-    Process the DataFrame by cleaning, renaming columns, filling NaN values, restructuring,
+    Process the DataFrame by cleaning, renaming columns, removing NaN, restructuring,
     converting data types, and formating.
 
     Parameters:
@@ -40,55 +40,17 @@ def process_dataframe(df):
     Returns:
     DataFrame: The processed DataFrame.
     """
+    
     header_row = locate_header_row(df)
     df = clean_dataframe(df, header_row)
-    
-    mapping = {
-        "Thứ hai": "Thứ 2",
-        "Thứ ba": "Thứ 3",
-        "Thứ tư": "Thứ 4",
-        "Thứ năm": "Thứ 5",
-        "Thứ sáu": "Thứ 6",
-        "Thứ bảy": "Thứ 7"
-    }
-
-    df = rename_columns(df, mapping)
-    df = concatenate_headers(df)
-    df = fill_nan_values(df)
-    df = concatenate_columns(df)
     df = restructure_dataframe(df)
-    df['Lượng mưa (mm)'] = df['Lượng mưa (mm)'].astype(float)
-    # df['Độ ẩm tương đối TB(%)'] = df['Độ ẩm tương đối TB(%)'].astype(int)
-    df['Độ ẩm tương đối TB(%)'] = pd.to_numeric(
-        df['Độ ẩm tương đối TB(%)'], errors='coerce').fillna(0).astype(int)
     processed_df = format_dataframe(df)
     return processed_df
 
 
-def format_dataframe(df):
-    """
-    Format the DataFrame for output.
-
-    Parameters:
-    df (DataFrame): The DataFrame to format.
-
-    Returns:
-    DataFrame: The formatted DataFrame.
-    """
-    output = df[
-        ['Điểm dự báo ', 'Ngày', 'Thời tiết', 'Nhiệt độ (°C)_Cao nhất', 
-         'Nhiệt độ (°C)_Thấp nhất']].copy()
-    output.iloc[:, 1] = output.iloc[:, 1] + '\n' + output.iloc[:, 2]
-    output['Nhiệt độ (°C)_Cao nhất'] = output['Nhiệt độ (°C)_Cao nhất'].astype(str)
-    output['Nhiệt độ (°C)_Thấp nhất'] = output['Nhiệt độ (°C)_Thấp nhất'].astype(str)
-    output['Nhiệt độ'] = output.iloc[:, 3] + '°C\n' + output.iloc[:, 4] + '°C'
-    output = output.drop(output.columns[2:5], axis=1)
-    return output
-
-
 def locate_header_row(df):
     """
-    Locate the header row in the DataFrame.
+    Locate the header row in the DataFrame dynamically.
 
     Parameters:
     df (DataFrame): The DataFrame to search.
@@ -96,7 +58,8 @@ def locate_header_row(df):
     Returns:
     int: The index of the header row.
     """
-    return df[df.eq('Điểm dự báo ').any(axis=1)].index[0]
+    return df[df.apply(
+        lambda row: row.astype(str).str.contains(r'Điểm dự báo', flags=re.IGNORECASE).any(), axis=1)].index[0]
 
 
 def clean_dataframe(df, header_row):
@@ -110,82 +73,73 @@ def clean_dataframe(df, header_row):
     Returns:
     DataFrame: The cleaned DataFrame.
     """
+    
+    # Locate and remove whitespaces in header row
     df.columns = df.iloc[header_row]
     df = df.drop(index=range(0, header_row+1))
-    column_indexes = [_ for _ in range(df.shape[1])]
-    column_indexes.remove(13)
-    df = df.iloc[:, column_indexes]
-    df = df.dropna(how='all')
-    df = df.iloc[:-1]
-    return df
+    df.columns = df.columns.str.strip()
+    
+    # Find columns with 'NaN' as header
+    nan_indices = [i for i, col in enumerate(df.columns) if pd.isna(col)]
 
+    # Keep only the first 'NaN' column
+    if len(nan_indices) > 1:
+        keep_indices = [i for i in range(df.shape[1]) if i not in nan_indices[1:]]
+        df = df.iloc[:, keep_indices]
 
-def rename_columns(df, mapping):
-    """
-    Rename columns in the DataFrame based on a mapping.
+    # Clean column names
+    mapping = {
+        "Thứ hai": "Thứ 2",
+        "Thứ ba": "Thứ 3",
+        "Thứ tư": "Thứ 4",
+        "Thứ năm": "Thứ 5",
+        "Thứ sáu": "Thứ 6",
+        "Thứ bảy": "Thứ 7"
+    }
+    df = df.rename(columns=mapping)
 
-    Parameters:
-    df (DataFrame): The DataFrame to rename columns.
-    mapping (dict): The mapping of old column names to new column names.
-
-    Returns:
-    DataFrame: The DataFrame with renamed columns.
-    """
-    return df.rename(columns=mapping)
-
-
-def concatenate_headers(df):
-    """
-    Concatenate headers in the DataFrame.
-
-    Parameters:
-    df (DataFrame): The DataFrame to concatenate headers.
-
-    Returns:
-    DataFrame: The DataFrame with concatenated headers.
-    """
-    header_row = df.columns
-    second_row = df.iloc[0]
-    date_row = second_row.apply(
-        lambda x: datetime.strptime(str(x), "%Y-%m-%d %H:%M:%S").strftime("%d/%m") if pd.notnull(x) else pd.NaT
+    headers = df.columns
+    date_row = df.iloc[0]
+    date_row = date_row.apply(
+        lambda x: datetime.strptime(str(x), "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y") if pd.notnull(x) else pd.NaT
     )
-    header_row = [
+    headers = [
         f'Ngày {value} ({header})' if pd.notnull(value) else header
-        for header, value in zip(header_row, date_row)
+        for header, value in zip(headers, date_row)
     ]
-    df.columns = header_row
-    df = df.drop(index=8)
-    return df
+    df.columns = headers
+    df = df.drop(index=header_row+1)
 
+    # Remove rows that are all NaN
+    df = df.replace(r'^\s*$', pd.NA, regex=True)
+    df = df.dropna(how='all')
 
-def fill_nan_values(df):
-    """
-    Fill NaN values in the DataFrame.
+    # Remove the signature row
+    df = df.iloc[:-1]
 
-    Parameters:
-    df (DataFrame): The DataFrame to fill NaN values.
-
-    Returns:
-    DataFrame: The DataFrame with filled NaN values.
-    """
+    # Fill NaN values in the 1st and 2nd column using ffill 
     df.iloc[:, 0] = df.iloc[:, 0].ffill()
     df.iloc[:, 1] = df.iloc[:, 1].ffill()
-    return df
 
+    # If the values from the second column are not NaN, concatenate them to the 3nd column and separate value by '_'. 
+    # After that , remove the 3rd column
 
-def concatenate_columns(df):
-    """
-    Concatenate columns in the DataFrame.
-
-    Parameters:
-    df (DataFrame): The DataFrame to concatenate columns.
-
-    Returns:
-    DataFrame: The DataFrame with concatenated columns.
-    """
     df.iloc[:, 1] = df.apply(
-        lambda row: f'{row.iloc[1]}_{row.iloc[2]}' if pd.notna(row.iloc[2]) else row.iloc[1], axis=1)
+        lambda row: f'{row.iloc[1]} {row.iloc[2]}' if pd.notna(row.iloc[2]) else row.iloc[1], axis=1)
     df = df.drop(df.columns[2], axis=1)
+
+    # Remove any remaining rows with NaN
+    df = df.dropna(how='any')
+
+    # Normalize the column headers by make sure only the first letter is capitalized
+    df.columns = [col.capitalize() for col in df.columns]
+
+    # Remove special characters in the second column, which will be used as headers later
+    df.iloc[:, 1] = df.iloc[:, 1].apply(lambda x: re.sub(r'\(°C\)|%|\(mm\)', '', str(x)))
+    df.iloc[:, 1] = df.iloc[:, 1].apply(
+        lambda x: ' '.join(
+            [x.split()[0].capitalize()] + [word.lower() for word in x.split()[1:]]))
+
     return df
 
 
@@ -199,17 +153,38 @@ def restructure_dataframe(df):
     Returns:
     DataFrame: The restructured DataFrame.
     """
-    grouped = df.groupby('Điểm dự báo ')
+    grouped = df.groupby('Điểm dự báo')
     sub_dfs = []
     for name, group in grouped:
-        sub_df = group.drop(columns=['Điểm dự báo ']).reset_index(drop=True)
+        sub_df = group.drop(columns=['Điểm dự báo']).reset_index(drop=True)
         sub_df = sub_df.transpose()
         sub_df.columns = sub_df.iloc[0]
         sub_df = sub_df.drop(sub_df.index[0])
         sub_df.insert(0, 'Ngày', sub_df.index)
-        sub_df.insert(0, 'Điểm dự báo ', name)
+        sub_df.insert(0, 'Điểm dự báo', name)
         sub_dfs.append(sub_df)
     return pd.concat(sub_dfs, ignore_index=False)
+
+
+def format_dataframe(df):
+    """
+    Format the DataFrame for output.
+
+    Parameters:
+    df (DataFrame): The DataFrame to format.
+
+    Returns:
+    DataFrame: The formatted DataFrame.
+    """
+    output = df[
+        ['Điểm dự báo', 'Ngày', 'Thời tiết', 'Nhiệt độ cao nhất', 
+         'Nhiệt độ thấp nhất']].copy()
+    output.iloc[:, 1] = output.iloc[:, 1] + '\n' + output.iloc[:, 2]
+    output['Nhiệt độ cao nhất'] = output['Nhiệt độ cao nhất'].astype(str)
+    output['Nhiệt độ thấp nhất'] = output['Nhiệt độ thấp nhất'].astype(str)
+    output['Nhiệt độ'] = output.iloc[:, 3] + '°C\n' + output.iloc[:, 4] + '°C'
+    output = output.drop(output.columns[2:5], axis=1)
+    return output
 
 
 def find_table(slide):
@@ -318,8 +293,10 @@ def update_table_with_data(table, df):
     table (Table): The table to update.
     df (DataFrame): The DataFrame containing the data.
     """
+
     for i in range(10):
-        set_cell_text_two_paragraphs(table.cell(i, 0), df.iloc[i, 1], temp=False)
+        date = re.sub(r'/\d{4}', '', df.iloc[i, 1])
+        set_cell_text_two_paragraphs(table.cell(i, 0), date, temp=False)
         set_cell_text_two_paragraphs(table.cell(i, 2), df.iloc[i, 2])
 
 
@@ -499,11 +476,11 @@ def extract_period(df):
     start_text = df.iloc[0, 1]
     end_text = df.iloc[9, 1]
 
-    start_date = re.search(r'Ngày (\d{2}/\d{2})', start_text).group(1)
-    end_date = re.search(r'Ngày (\d{2}/\d{2})', end_text).group(1)
+    start_date = re.search(r'Ngày (\d{2}/\d{2}/\d{4})', start_text).group(1)
+    end_date = re.search(r'Ngày (\d{2}/\d{2}/\d{4})', end_text).group(1)
 
-    start_day, start_month = start_date.split('/')
-    end_day, end_month = end_date.split('/')
+    start_day, start_month, start_year = start_date.split('/')
+    end_day, end_month, end_year = end_date.split('/')
 
     start_day = start_day.lstrip('0')
     end_day = end_day.lstrip('0')
@@ -511,9 +488,9 @@ def extract_period(df):
     end_month = end_month.lstrip('0')
 
     if start_month == end_month:
-        return f'Từ ngày {start_day} - {end_day} tháng {start_month} năm 2025'
+        return f'Từ ngày {start_day} - {end_day} tháng {start_month} năm {end_year}'
     else:
-        return f'Từ ngày {start_day}/{start_month} - {end_day}/{end_month} năm 2025'
+        return f'Từ ngày {start_day}/{start_month} - {end_day}/{end_month} năm {end_year}'
 
 
 def write_period(slide, new_text):
